@@ -38,7 +38,7 @@ func validateHeaders(tableName string, headers []string) bool {
 }
 
 // Create the database and schema
-func newMovieSchema(movieDbFile string) (*Movies, *Movies_genres, error) {
+func newSchema(movieDbFile string) (*Movies, *Movies_genres, error) {
 	schema := `
 	CREATE TABLE movies (
 		id INTEGER PRIMARY KEY,
@@ -95,7 +95,7 @@ func (m *Movies) populateMovies() error {
 
 	if !validateHeaders("movies", moviesHeader) {
 		fmt.Println("Unexpected CSV headers")
-		return fmt.Errorf("unexpected CSV headers")
+		return err
 	}
 
 	// Start a transaction
@@ -174,6 +174,109 @@ func (m *Movies) populateMovies() error {
 	return nil
 }
 
+// Populate the movies_genres table
+func (m *Movies_genres) populateMoviesGenres() error {
+	// Open the CSV file
+	moviesGenresCSV, err := os.Open("001-IMDb/IMDB-movies_genres.csv")
+	if err != nil {
+		fmt.Println("Error opening CSV file", err)
+		return err
+	}
+	defer moviesGenresCSV.Close()
+
+	// Init csv reader
+	moviesGenresReader := csv.NewReader(moviesGenresCSV)
+	// I was losing about 400 rows due to unescaped
+	// double quotes, so I set LazyQuotes to accept these rows.
+	moviesGenresReader.LazyQuotes = true
+
+	moviesGenresHeader, err := moviesGenresReader.Read()
+	if err != nil {
+		fmt.Println("Error reading CSV header", err)
+		return err
+	}
+
+	if !validateHeaders("movies_genres", moviesGenresHeader) {
+		fmt.Println("Unexpected CSV headers")
+		return err
+	}
+
+	// Start a transaction
+	tx, err := m.db.Begin()
+	if err != nil {
+		fmt.Println("Error starting transaction:", err)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Create an interface to hold the batch values
+	const batchSize = 100
+	values := make([]interface{}, 0, batchSize*4)
+	insertStmt := "INSERT INTO movies_genres (movie_id, genre) VALUES"
+	validRowCount := 0
+	totalMovies := 0
+
+	// Read the rest of the rows, skip the problematic rows and insert the rest into the database
+	rowNumber := 1
+	for {
+		moviesRecord, err := moviesGenresReader.Read()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Printf("Skipping problematic row %d: %v\n", rowNumber, err)
+			rowNumber++
+			continue
+		}
+
+		values = append(values, moviesRecord[0], moviesRecord[1])
+		insertStmt += "(?, ?),"
+		validRowCount++
+
+		if validRowCount == batchSize {
+			_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
+			if err != nil {
+				fmt.Printf("Error inserting batch at row %d: %v", rowNumber, err)
+				return err
+			}
+
+			fmt.Printf("Inserted batch at row %d\n", rowNumber)
+			totalMovies += 100
+
+			// Reset the interface for next batch
+			values = values[:0]
+			insertStmt = "INSERT INTO movies_genres (movie_id, genre) VALUES"
+			validRowCount = 0
+		}
+
+		rowNumber++
+	}
+
+	// Insert the remaining values < batchSize
+	if len(values) > 0 {
+		_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
+		if err != nil {
+			fmt.Printf("Error inserting the remaining batch: %v", err)
+			return err
+		}
+		totalMovies += len(values) / 2
+	}
+
+	// Commit the tx
+	if err := tx.Commit(); err != nil {
+		fmt.Println("Error committing transaction:", err)
+		return err
+	}
+
+	fmt.Println("Movies_genres table populated successfully")
+	fmt.Printf("Total movies_genres rows inserted: %d\n", totalMovies)
+	return nil
+}
+
 func main() {
 	// Create a temporary directory for the SQLite database
 	dir, err := os.MkdirTemp("", "moviedb-")
@@ -187,7 +290,7 @@ func main() {
 	movieDbFile := filepath.Join(dir, "moviedb.db")
 
 	// Create the database and schema
-	movies, genres, err := newMovieSchema(movieDbFile)
+	movies, genres, err := newSchema(movieDbFile)
 	if err != nil {
 		fmt.Println("Error creating schema:", err)
 		return
@@ -199,4 +302,8 @@ func main() {
 
 	// Populate the movies table
 	err = movies.populateMovies()
+	// Populate the movies_genres table
+	err = genres.populateMoviesGenres()
+	fmt.Println("Populated movies table")
+	fmt.Println("Populated movies_genres table")
 }
