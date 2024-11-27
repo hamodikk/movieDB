@@ -275,7 +275,7 @@ func (mg *Movies_genres) populateMoviesGenres() error {
 	return nil
 }
 
-func queryDb(db *sql.DB) error {
+func queryDbHighestRatedGenres(db *sql.DB) error {
 	query := `
 		SELECT
 			mg.genre,
@@ -337,6 +337,64 @@ func queryDb(db *sql.DB) error {
 	return nil
 }
 
+func queryDbMovieCountPerGenre(db *sql.DB) error {
+	query := `
+		SELECT
+			mg.genre,
+			COUNT(m.id) AS movie_count
+		FROM
+			movies_genres mg
+		JOIN
+			movies m
+		ON
+			mg.movie_id = m.id
+		GROUP BY
+			mg.genre
+		ORDER BY
+			movie_count DESC
+		LIMIT 20;
+`
+	// Debug
+	fmt.Println("Executing query...")
+	rows, err := db.Query(query)
+	if err != nil {
+		return fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	fmt.Printf("Top 20 genres with most movies:\n")
+	fmt.Printf("%-20s %-10s\n", "Genre", "Movie Count")
+	fmt.Println(strings.Repeat("-", 30))
+
+	rowCount := 0
+	for rows.Next() {
+		var genre string
+		var movieCount int
+
+		if err := rows.Scan(&genre, &movieCount); err != nil {
+			fmt.Printf("error scanning row: %v", err)
+			continue
+		}
+
+		fmt.Printf("%-20s %-10d\n", genre, movieCount)
+		rowCount++
+	}
+
+	// Check for errors during iteration
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating rows: %v", err)
+	}
+
+	// log number of rows processed
+	if rowCount == 0 {
+		fmt.Println("No rows found")
+	} else {
+		fmt.Printf("Total rows processed: %d\n", rowCount)
+	}
+
+	return nil
+}
+
 func main() {
 	// Create a temporary directory for the SQLite database
 	dir, err := os.MkdirTemp("", "moviedb-")
@@ -361,9 +419,23 @@ func main() {
 	fmt.Println("Database schema created successfully")
 
 	// Populate the movies table
-	err = movies.populateMovies()
+	if err = movies.populateMovies(); err != nil {
+		fmt.Println("Error populating movies table:", err)
+		return
+	}
 	// Populate the movies_genres table
-	err = genres.populateMoviesGenres()
-	// Query the database
-	err = queryDb(movies.db)
+	if err = genres.populateMoviesGenres(); err != nil {
+		fmt.Println("Error populating movies_genres table:", err)
+		return
+	}
+	// Query the database for genres with highest rating
+	if err = queryDbHighestRatedGenres(movies.db); err != nil {
+		fmt.Println("Error querying database:", err)
+		return
+	}
+	// Query the database for genres with most movies
+	if err = queryDbMovieCountPerGenre(movies.db); err != nil {
+		fmt.Println("Error querying database:", err)
+		return
+	}
 }
