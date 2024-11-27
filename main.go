@@ -83,6 +83,9 @@ func (m *Movies) populateMovies() error {
 
 	// Init csv reader
 	moviesReader := csv.NewReader(moviesCSV)
+	// I was losing about 400 rows due to unescaped
+	// double quotes, so I set LazyQuotes to accept these rows.
+	moviesReader.LazyQuotes = true
 
 	moviesHeader, err := moviesReader.Read()
 	if err != nil {
@@ -107,34 +110,57 @@ func (m *Movies) populateMovies() error {
 		}
 	}()
 
-	// Prepare insert statement
-	stmt, err := tx.Prepare("INSERT INTO movies (id, name, year, rank) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		fmt.Println("Error Preparing insert statement:", err)
-		return err
-	}
-	defer stmt.Close()
+	// Create an interface to hold the batch values
+	const batchSize = 100
+	values := make([]interface{}, 0, batchSize*4)
+	insertStmt := "INSERT INTO movies (id, name, year, rank) VALUES"
+	validRowCount := 0
+	totalMovies := 0
 
 	// Read the rest of the rows, skip the problematic rows and insert the rest into the database
 	rowNumber := 1
 	for {
-		rowNumber++
 		moviesRecord, err := moviesReader.Read()
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			fmt.Printf("Skipping problematic row %d: %v\n", rowNumber, err)
+			rowNumber++
 			continue
 		}
 
-		fmt.Printf("Inserting row %d: %v\n", rowNumber, moviesRecord)
+		values = append(values, moviesRecord[0], moviesRecord[1], moviesRecord[2], moviesRecord[3])
+		insertStmt += "(?, ?, ?, ?),"
+		validRowCount++
 
-		_, err = stmt.Exec(moviesRecord[0], moviesRecord[1], moviesRecord[2], moviesRecord[3])
+		if validRowCount == batchSize {
+			_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
+			if err != nil {
+				fmt.Printf("Error inserting batch at row %d: %v", rowNumber, err)
+				return err
+			}
+
+			fmt.Printf("Inserted batch at row %d\n", rowNumber)
+			totalMovies += 100
+
+			// Reset the interface for next batch
+			values = values[:0]
+			insertStmt = "INSERT INTO movies (id, name, year, rank) VALUES"
+			validRowCount = 0
+		}
+
+		rowNumber++
+	}
+
+	// Insert the remaining values < batchSize
+	if len(values) > 0 {
+		_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
 		if err != nil {
-			fmt.Printf("Error inserting row %d: %v", rowNumber, err)
+			fmt.Printf("Error inserting the remaining batch: %v", err)
 			return err
 		}
+		totalMovies += len(values) / 4
 	}
 
 	// Commit the tx
@@ -144,6 +170,7 @@ func (m *Movies) populateMovies() error {
 	}
 
 	fmt.Println("Movies table populated successfully")
+	fmt.Printf("Total movies inserted: %d\n", totalMovies)
 	return nil
 }
 
