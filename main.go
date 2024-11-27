@@ -141,7 +141,6 @@ func (m *Movies) populateMovies() error {
 				return err
 			}
 
-			fmt.Printf("Inserted batch at row %d\n", rowNumber)
 			totalMovies += 100
 
 			// Reset the interface for next batch
@@ -175,7 +174,7 @@ func (m *Movies) populateMovies() error {
 }
 
 // Populate the movies_genres table
-func (m *Movies_genres) populateMoviesGenres() error {
+func (mg *Movies_genres) populateMoviesGenres() error {
 	// Open the CSV file
 	moviesGenresCSV, err := os.Open("001-IMDb/IMDB-movies_genres.csv")
 	if err != nil {
@@ -202,7 +201,7 @@ func (m *Movies_genres) populateMoviesGenres() error {
 	}
 
 	// Start a transaction
-	tx, err := m.db.Begin()
+	tx, err := mg.db.Begin()
 	if err != nil {
 		fmt.Println("Error starting transaction:", err)
 		return err
@@ -244,7 +243,6 @@ func (m *Movies_genres) populateMoviesGenres() error {
 				return err
 			}
 
-			fmt.Printf("Inserted batch at row %d\n", rowNumber)
 			totalMovies += 100
 
 			// Reset the interface for next batch
@@ -277,6 +275,68 @@ func (m *Movies_genres) populateMoviesGenres() error {
 	return nil
 }
 
+func queryDb(db *sql.DB) error {
+	query := `
+		SELECT
+			mg.genre,
+			AVG(m.rank) AS avg_rank,
+			COUNT(m.id) AS movie_count
+		FROM
+			movies_genres mg
+		JOIN
+			movies m
+		ON
+			mg.movie_id = m.id
+		WHERE
+			m.rank IS NOT NULL AND m.rank != 'NULL'
+		GROUP BY
+			mg.genre, m.rank
+		ORDER BY
+			avg_rank DESC
+		LIMIT 20;
+`
+	// Debug
+	fmt.Println("Executing query...")
+	rows, err := db.Query(query)
+	if err != nil {
+		return fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	fmt.Printf("Top 20 highest rated genres:\n")
+	fmt.Printf("%-20s %-10s %-10s\n", "Genre", "Avg Rating", "Movie Count")
+	fmt.Println(strings.Repeat("-", 40))
+
+	rowCount := 0
+	for rows.Next() {
+		var genre string
+		var avgRating *float64
+		var movieCount int
+
+		if err := rows.Scan(&genre, &avgRating, &movieCount); err != nil {
+			fmt.Printf("error scanning row: %v", err)
+			continue
+		}
+
+		fmt.Printf("%-20s %-10.2f %-10d\n", genre, *avgRating, movieCount)
+		rowCount++
+	}
+
+	// Check for errors during iteration
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating rows: %v", err)
+	}
+
+	// log number of rows processed
+	if rowCount == 0 {
+		fmt.Println("No rows found")
+	} else {
+		fmt.Printf("Total rows processed: %d\n", rowCount)
+	}
+
+	return nil
+}
+
 func main() {
 	// Create a temporary directory for the SQLite database
 	dir, err := os.MkdirTemp("", "moviedb-")
@@ -304,6 +364,6 @@ func main() {
 	err = movies.populateMovies()
 	// Populate the movies_genres table
 	err = genres.populateMoviesGenres()
-	fmt.Println("Populated movies table")
-	fmt.Println("Populated movies_genres table")
+	// Query the database
+	err = queryDb(movies.db)
 }
