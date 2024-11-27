@@ -95,6 +95,26 @@ func (m *Movies) populateMovies() error {
 		return fmt.Errorf("unexpected CSV headers")
 	}
 
+	// Start a transaction
+	tx, err := m.db.Begin()
+	if err != nil {
+		fmt.Println("Error starting transaction:", err)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Prepare insert statement
+	stmt, err := tx.Prepare("INSERT INTO movies (id, name, year, rank) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		fmt.Println("Error Preparing insert statement:", err)
+		return err
+	}
+	defer stmt.Close()
+
 	// Read the rest of the rows, skip the problematic rows and insert the rest into the database
 	rowNumber := 1
 	for {
@@ -110,11 +130,17 @@ func (m *Movies) populateMovies() error {
 
 		fmt.Printf("Inserting row %d: %v\n", rowNumber, moviesRecord)
 
-		_, err = m.db.Exec("INSERT INTO movies (id, name, year, rank) VALUES (?, ?, ?, ?)", moviesRecord[0], moviesRecord[1], moviesRecord[2], moviesRecord[3])
+		_, err = stmt.Exec(moviesRecord[0], moviesRecord[1], moviesRecord[2], moviesRecord[3])
 		if err != nil {
-			fmt.Println("Error inserting record:", err)
+			fmt.Printf("Error inserting row %d: %v", rowNumber, err)
 			return err
 		}
+	}
+
+	// Commit the tx
+	if err := tx.Commit(); err != nil {
+		fmt.Println("Error committing transaction:", err)
+		return err
 	}
 
 	fmt.Println("Movies table populated successfully")
