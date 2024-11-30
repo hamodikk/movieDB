@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,11 +58,13 @@ func newSchema(movieDbFile string) (*Movies, *Movies_genres, error) {
 	db, err := sql.Open("sqlite", movieDbFile)
 	if err != nil {
 		fmt.Println("Error opening database:", err)
+		log.Printf("Error opening database: %v\n", err)
 		return nil, nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		fmt.Println("Error creating schema:", err)
+		log.Printf("Error creating schema: %v\n", err)
 		return nil, nil, err
 	}
 	return &Movies{
@@ -77,6 +80,7 @@ func (m *Movies) populateMovies() error {
 	moviesCSV, err := os.Open("001-IMDb/IMDB-movies.csv")
 	if err != nil {
 		fmt.Println("Error opening CSV file", err)
+		log.Printf("Error opening CSV file: %v\n", err)
 		return err
 	}
 	defer moviesCSV.Close()
@@ -87,14 +91,18 @@ func (m *Movies) populateMovies() error {
 	// double quotes, so I set LazyQuotes to accept these rows.
 	moviesReader.LazyQuotes = true
 
+	// Read the headers
 	moviesHeader, err := moviesReader.Read()
 	if err != nil {
 		fmt.Println("Error reading CSV header", err)
+		log.Printf("Error reading CSV header: %v\n", err)
 		return err
 	}
 
+	// Validate the headers
 	if !validateHeaders("movies", moviesHeader) {
 		fmt.Println("Unexpected CSV headers")
+		log.Println("Unexpected CSV headers")
 		return err
 	}
 
@@ -102,6 +110,7 @@ func (m *Movies) populateMovies() error {
 	tx, err := m.db.Begin()
 	if err != nil {
 		fmt.Println("Error starting transaction:", err)
+		log.Printf("Error starting transaction: %v\n", err)
 		return err
 	}
 	defer func() {
@@ -126,18 +135,22 @@ func (m *Movies) populateMovies() error {
 				break
 			}
 			fmt.Printf("Skipping problematic row %d: %v\n", rowNumber, err)
+			log.Printf("Skipping problematic row %d: %v\n", rowNumber, err)
 			rowNumber++
 			continue
 		}
 
+		// Append the values to the interface
 		values = append(values, moviesRecord[0], moviesRecord[1], moviesRecord[2], moviesRecord[3])
 		insertStmt += "(?, ?, ?, ?),"
 		validRowCount++
 
+		// When the rows reach the batch size, put the insert statement into the transaction
 		if validRowCount == batchSize {
 			_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
 			if err != nil {
 				fmt.Printf("Error inserting batch at row %d: %v", rowNumber, err)
+				log.Printf("Error inserting batch at row %d: %v", rowNumber, err)
 				return err
 			}
 
@@ -157,6 +170,7 @@ func (m *Movies) populateMovies() error {
 		_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
 		if err != nil {
 			fmt.Printf("Error inserting the remaining batch: %v", err)
+			log.Printf("Error inserting the remaining batch: %v", err)
 			return err
 		}
 		totalMovies += len(values) / 4
@@ -165,11 +179,14 @@ func (m *Movies) populateMovies() error {
 	// Commit the tx
 	if err := tx.Commit(); err != nil {
 		fmt.Println("Error committing transaction:", err)
+		log.Printf("Error committing transaction: %v", err)
 		return err
 	}
 
 	fmt.Println("Movies table populated successfully")
 	fmt.Printf("Total movies inserted: %d\n", totalMovies)
+	log.Println("Movies table populated successfully")
+	log.Printf("Total movies inserted: %d\n", totalMovies)
 	return nil
 }
 
@@ -179,6 +196,7 @@ func (mg *Movies_genres) populateMoviesGenres() error {
 	moviesGenresCSV, err := os.Open("001-IMDb/IMDB-movies_genres.csv")
 	if err != nil {
 		fmt.Println("Error opening CSV file", err)
+		log.Printf("Error opening CSV file: %v\n", err)
 		return err
 	}
 	defer moviesGenresCSV.Close()
@@ -187,16 +205,21 @@ func (mg *Movies_genres) populateMoviesGenres() error {
 	moviesGenresReader := csv.NewReader(moviesGenresCSV)
 	// I was losing about 400 rows due to unescaped
 	// double quotes, so I set LazyQuotes to accept these rows.
+	// This won't be an issue in movies_genres.csv but I'll keep it anyway.
 	moviesGenresReader.LazyQuotes = true
 
+	// Read the headers
 	moviesGenresHeader, err := moviesGenresReader.Read()
 	if err != nil {
 		fmt.Println("Error reading CSV header", err)
+		log.Printf("Error reading CSV header: %v\n", err)
 		return err
 	}
 
+	// Validate the headers
 	if !validateHeaders("movies_genres", moviesGenresHeader) {
 		fmt.Println("Unexpected CSV headers")
+		log.Println("Unexpected CSV headers")
 		return err
 	}
 
@@ -204,6 +227,7 @@ func (mg *Movies_genres) populateMoviesGenres() error {
 	tx, err := mg.db.Begin()
 	if err != nil {
 		fmt.Println("Error starting transaction:", err)
+		log.Printf("Error starting transaction: %v\n", err)
 		return err
 	}
 	defer func() {
@@ -228,18 +252,22 @@ func (mg *Movies_genres) populateMoviesGenres() error {
 				break
 			}
 			fmt.Printf("Skipping problematic row %d: %v\n", rowNumber, err)
+			log.Printf("Skipping problematic row %d: %v\n", rowNumber, err)
 			rowNumber++
 			continue
 		}
 
+		// Append the values to the interface
 		values = append(values, moviesRecord[0], moviesRecord[1])
 		insertStmt += "(?, ?),"
 		validRowCount++
 
+		// When the rows reach the batch size, put the insert statement into the transaction
 		if validRowCount == batchSize {
 			_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
 			if err != nil {
 				fmt.Printf("Error inserting batch at row %d: %v", rowNumber, err)
+				log.Printf("Error inserting batch at row %d: %v", rowNumber, err)
 				return err
 			}
 
@@ -259,6 +287,7 @@ func (mg *Movies_genres) populateMoviesGenres() error {
 		_, err := tx.Exec(insertStmt[:len(insertStmt)-1], values...)
 		if err != nil {
 			fmt.Printf("Error inserting the remaining batch: %v", err)
+			log.Printf("Error inserting the remaining batch: %v", err)
 			return err
 		}
 		totalMovies += len(values) / 2
@@ -267,11 +296,14 @@ func (mg *Movies_genres) populateMoviesGenres() error {
 	// Commit the tx
 	if err := tx.Commit(); err != nil {
 		fmt.Println("Error committing transaction:", err)
+		log.Printf("Error committing transaction: %v", err)
 		return err
 	}
 
 	fmt.Println("Movies_genres table populated successfully")
 	fmt.Printf("Total movies_genres rows inserted: %d\n", totalMovies)
+	log.Println("Movies_genres table populated successfully")
+	log.Printf("Total movies_genres rows inserted: %d\n", totalMovies)
 	return nil
 }
 
@@ -299,6 +331,7 @@ func queryDbHighestRatedGenres(db *sql.DB) error {
 	fmt.Println("Executing query...")
 	rows, err := db.Query(query)
 	if err != nil {
+		log.Printf("error querying database: %v\n", err)
 		return fmt.Errorf("error querying database: %v", err)
 	}
 	defer rows.Close()
@@ -306,6 +339,9 @@ func queryDbHighestRatedGenres(db *sql.DB) error {
 	fmt.Printf("Top 20 highest rated genres:\n")
 	fmt.Printf("%-20s %-10s %-10s\n", "Genre", "Avg Rating", "Movie Count")
 	fmt.Println(strings.Repeat("-", 40))
+	log.Printf("Top 20 highest rated genres:\n")
+	log.Printf("%-20s %-10s %-10s\n", "Genre", "Avg Rating", "Movie Count")
+	log.Println(strings.Repeat("-", 40))
 
 	rowCount := 0
 	for rows.Next() {
@@ -315,23 +351,28 @@ func queryDbHighestRatedGenres(db *sql.DB) error {
 
 		if err := rows.Scan(&genre, &avgRating, &movieCount); err != nil {
 			fmt.Printf("error scanning row: %v", err)
+			log.Printf("error scanning row: %v", err)
 			continue
 		}
 
 		fmt.Printf("%-20s %-10.2f %-10d\n", genre, *avgRating, movieCount)
+		log.Printf("%-20s %-10.2f %-10d\n", genre, *avgRating, movieCount)
 		rowCount++
 	}
 
 	// Check for errors during iteration
 	if err := rows.Err(); err != nil {
+		log.Printf("error iterating rows: %v\n", err)
 		return fmt.Errorf("error iterating rows: %v", err)
 	}
 
 	// log number of rows processed
 	if rowCount == 0 {
 		fmt.Println("No rows found")
+		log.Println("No rows found")
 	} else {
 		fmt.Printf("Total rows processed: %d\n", rowCount)
+		log.Printf("Total rows processed: %d\n", rowCount)
 	}
 
 	return nil
@@ -358,6 +399,7 @@ func queryDbMovieCountPerGenre(db *sql.DB) error {
 	fmt.Println("Executing query...")
 	rows, err := db.Query(query)
 	if err != nil {
+		log.Printf("error querying database: %v\n", err)
 		return fmt.Errorf("error querying database: %v", err)
 	}
 	defer rows.Close()
@@ -365,6 +407,9 @@ func queryDbMovieCountPerGenre(db *sql.DB) error {
 	fmt.Printf("Top 20 genres with most movies:\n")
 	fmt.Printf("%-20s %-10s\n", "Genre", "Movie Count")
 	fmt.Println(strings.Repeat("-", 30))
+	log.Printf("Top 20 genres with most movies:\n")
+	log.Printf("%-20s %-10s\n", "Genre", "Movie Count")
+	log.Println(strings.Repeat("-", 30))
 
 	rowCount := 0
 	for rows.Next() {
@@ -373,33 +418,47 @@ func queryDbMovieCountPerGenre(db *sql.DB) error {
 
 		if err := rows.Scan(&genre, &movieCount); err != nil {
 			fmt.Printf("error scanning row: %v", err)
+			log.Printf("error scanning row: %v", err)
 			continue
 		}
 
 		fmt.Printf("%-20s %-10d\n", genre, movieCount)
+		log.Printf("%-20s %-10d\n", genre, movieCount)
 		rowCount++
 	}
 
 	// Check for errors during iteration
 	if err := rows.Err(); err != nil {
+		log.Printf("error iterating rows: %v\n", err)
 		return fmt.Errorf("error iterating rows: %v", err)
 	}
 
 	// log number of rows processed
 	if rowCount == 0 {
 		fmt.Println("No rows found")
+		log.Println("No rows found")
 	} else {
 		fmt.Printf("Total rows processed: %d\n", rowCount)
+		log.Printf("Total rows processed: %d\n", rowCount)
 	}
 
 	return nil
 }
 
 func main() {
+	// Set up logging to report query results
+	logFile, err := os.OpenFile("moviesDB.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
+
 	// Create a temporary directory for the SQLite database
 	dir, err := os.MkdirTemp("", "moviedb-")
 	if err != nil {
 		fmt.Println("Error creating temporary directory:", err)
+		log.Printf("Error creating temporary directory: %v\n", err)
 		return
 	}
 	// Close and remove directory after execution
@@ -411,31 +470,37 @@ func main() {
 	movies, genres, err := newSchema(movieDbFile)
 	if err != nil {
 		fmt.Println("Error creating schema:", err)
+		log.Printf("Error creating schema: %v\n", err)
 		return
 	}
 	defer movies.db.Close()
 	defer genres.db.Close()
 
 	fmt.Println("Database schema created successfully")
+	log.Println("Database schema created successfully")
 
 	// Populate the movies table
 	if err = movies.populateMovies(); err != nil {
 		fmt.Println("Error populating movies table:", err)
+		log.Printf("Error populating movies table: %v\n", err)
 		return
 	}
 	// Populate the movies_genres table
 	if err = genres.populateMoviesGenres(); err != nil {
 		fmt.Println("Error populating movies_genres table:", err)
+		log.Printf("Error populating movies_genres table: %v\n", err)
 		return
 	}
 	// Query the database for genres with highest rating
 	if err = queryDbHighestRatedGenres(movies.db); err != nil {
 		fmt.Println("Error querying database:", err)
+		log.Printf("Error querying database: %v\n", err)
 		return
 	}
 	// Query the database for genres with most movies
 	if err = queryDbMovieCountPerGenre(movies.db); err != nil {
 		fmt.Println("Error querying database:", err)
+		log.Printf("Error querying database: %v\n", err)
 		return
 	}
 }
